@@ -191,6 +191,7 @@ gst_dshowvideosrc_init (GstDshowVideoSrc * src)
   CoInitializeEx (NULL, COINIT_MULTITHREADED);
 
   gst_base_src_set_live (GST_BASE_SRC (src), TRUE);
+  gst_base_src_set_format(GST_BASE_SRC(src), GST_FORMAT_TIME);
 }
 
 static GstCaps *
