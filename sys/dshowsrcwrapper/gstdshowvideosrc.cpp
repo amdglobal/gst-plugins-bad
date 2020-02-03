@@ -753,9 +753,11 @@ gst_dshowvideosrc_set_caps (GstBaseSrc * bsrc, GstCaps * caps)
 	GstVideoInfo info;
 	gst_video_info_from_caps(&info, caps);
 	switch (GST_VIDEO_INFO_FORMAT(&info)) {
-          case GST_VIDEO_FORMAT_RGB:
-          case GST_VIDEO_FORMAT_BGR:
-	    src->is_rgb = TRUE;
+	 case GST_VIDEO_FORMAT_RGB:
+	 case GST_VIDEO_FORMAT_BGR:
+	 case GST_VIDEO_FORMAT_BGRx:
+	 case GST_VIDEO_FORMAT_RGBx:
+            src->is_rgb = TRUE;
 	    break;
 	default:
 	  src->is_rgb = FALSE;
