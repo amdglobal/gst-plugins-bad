@@ -22,41 +22,48 @@
 
 #include <gst/gst.h>
 /* libice */
+#include "gstwebrtcice.h"
 #include <agent.h>
 #include <gst/webrtc/webrtc.h>
-#include "gstwebrtcice.h"
 
 G_BEGIN_DECLS
 
 GType gst_webrtc_ice_stream_get_type(void);
-#define GST_TYPE_WEBRTC_ICE_STREAM            (gst_webrtc_ice_stream_get_type())
-#define GST_WEBRTC_ICE_STREAM(obj)            (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_WEBRTC_ICE_STREAM,GstWebRTCICEStream))
-#define GST_IS_WEBRTC_ICE_STREAM(obj)         (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_WEBRTC_ICE_STREAM))
-#define GST_WEBRTC_ICE_STREAM_CLASS(klass)    (G_TYPE_CHECK_CLASS_CAST((klass) ,GST_TYPE_WEBRTC_ICE_STREAM,GstWebRTCICEStreamClass))
-#define GST_IS_WEBRTC_ICE_STREAM_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE((klass) ,GST_TYPE_WEBRTC_ICE_STREAM))
-#define GST_WEBRTC_ICE_STREAM_GET_CLASS(obj)  (G_TYPE_INSTANCE_GET_CLASS((obj) ,GST_TYPE_WEBRTC_ICE_STREAM,GstWebRTCICEStreamClass))
+#define GST_TYPE_WEBRTC_ICE_STREAM (gst_webrtc_ice_stream_get_type())
+#define GST_WEBRTC_ICE_STREAM(obj)                                             \
+  (G_TYPE_CHECK_INSTANCE_CAST((obj), GST_TYPE_WEBRTC_ICE_STREAM,               \
+                              GstWebRTCICEStream))
+#define GST_IS_WEBRTC_ICE_STREAM(obj)                                          \
+  (G_TYPE_CHECK_INSTANCE_TYPE((obj), GST_TYPE_WEBRTC_ICE_STREAM))
+#define GST_WEBRTC_ICE_STREAM_CLASS(klass)                                     \
+  (G_TYPE_CHECK_CLASS_CAST((klass), GST_TYPE_WEBRTC_ICE_STREAM,                \
+                           GstWebRTCICEStreamClass))
+#define GST_IS_WEBRTC_ICE_STREAM_CLASS(klass)                                  \
+  (G_TYPE_CHECK_CLASS_TYPE((klass), GST_TYPE_WEBRTC_ICE_STREAM))
+#define GST_WEBRTC_ICE_STREAM_GET_CLASS(obj)                                   \
+  (G_TYPE_INSTANCE_GET_CLASS((obj), GST_TYPE_WEBRTC_ICE_STREAM,                \
+                             GstWebRTCICEStreamClass))
 
-struct _GstWebRTCICEStream
-{
-  GstObject                 parent;
+struct _GstWebRTCICEStream {
+  GstObject parent;
 
-  GstWebRTCICE             *ice;
+  GstWebRTCICE *ice;
 
-  guint                     stream_id;
+  guint stream_id;
 
   GstWebRTCICEStreamPrivate *priv;
 };
 
-struct _GstWebRTCICEStreamClass
-{
-  GstObjectClass            parent_class;
+struct _GstWebRTCICEStreamClass {
+  GstObjectClass parent_class;
 };
 
-GstWebRTCICEStream *        gst_webrtc_ice_stream_new                   (GstWebRTCICE * ice,
-                                                                         guint stream_id);
-GstWebRTCICETransport *     gst_webrtc_ice_stream_find_transport        (GstWebRTCICEStream * stream,
-                                                                         GstWebRTCICEComponent component);
-gboolean                    gst_webrtc_ice_stream_gather_candidates     (GstWebRTCICEStream * ice);
+GstWebRTCICEStream *gst_webrtc_ice_stream_new(GstWebRTCICE *ice,
+                                              guint stream_id);
+GstWebRTCICETransport *
+gst_webrtc_ice_stream_find_transport(GstWebRTCICEStream *stream,
+                                     GstWebRTCICEComponent component);
+gboolean gst_webrtc_ice_stream_gather_candidates(GstWebRTCICEStream *ice);
 
 G_END_DECLS
 
