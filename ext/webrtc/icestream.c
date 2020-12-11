@@ -18,7 +18,7 @@
  */
 
 #ifdef HAVE_CONFIG_H
-# include "config.h"
+#include "config.h"
 #endif
 
 #include "icestream.h"
@@ -40,19 +40,21 @@ enum
   PROP_STREAM_ID,
 };
 
-//static guint gst_webrtc_ice_stream_signals[LAST_SIGNAL] = { 0 };
+// static guint gst_webrtc_ice_stream_signals[LAST_SIGNAL] = { 0 };
 
 struct _GstWebRTCICEStreamPrivate
 {
   gboolean gathered;
   GList *transports;
+  gboolean gathering_started;
 };
 
 #define gst_webrtc_ice_stream_parent_class parent_class
 G_DEFINE_TYPE_WITH_CODE (GstWebRTCICEStream, gst_webrtc_ice_stream,
     GST_TYPE_OBJECT, G_ADD_PRIVATE (GstWebRTCICEStream)
     GST_DEBUG_CATEGORY_INIT (gst_webrtc_ice_stream_debug,
-        "webrtcicestream", 0, "webrtcicestream"););
+        "webrtcicestream", 0, "webrtcicestream");
+    );
 
 static void
 gst_webrtc_ice_stream_set_property (GObject * object, guint prop_id,
@@ -187,6 +189,25 @@ gst_webrtc_ice_stream_gather_candidates (GstWebRTCICEStream * stream)
   }
 
   g_object_get (stream->ice, "agent", &agent, NULL);
+  if (!stream->priv->gathering_started) {
+    if (stream->ice->min_rtp_port || stream->ice->max_rtp_port) {
+      g_printerr ("nice_agent_set_port_range(%d, %d)\n",
+          stream->ice->min_rtp_port, stream->ice->max_rtp_port);
+      nice_agent_set_port_range (agent, stream->stream_id,
+          NICE_COMPONENT_TYPE_RTP, stream->ice->min_rtp_port,
+          stream->ice->max_rtp_port);
+    }
+    if (stream->ice->min_rtcp_port || stream->ice->max_rtcp_port) {
+      g_printerr ("nice_agent_set_port_range(%d, %d)\n",
+          stream->ice->min_rtcp_port, stream->ice->max_rtcp_port);
+      nice_agent_set_port_range (agent, stream->stream_id,
+          NICE_COMPONENT_TYPE_RTCP, stream->ice->min_rtcp_port,
+          stream->ice->max_rtcp_port);
+    }
+
+    stream->priv->gathering_started = TRUE;
+  }
+  g_printerr ("nice_agent_gather_candidates(%d)\n", stream->stream_id);
   if (!nice_agent_gather_candidates (agent, stream->stream_id)) {
     g_object_unref (agent);
     return FALSE;
@@ -206,18 +227,14 @@ gst_webrtc_ice_stream_class_init (GstWebRTCICEStreamClass * klass)
   gobject_class->set_property = gst_webrtc_ice_stream_set_property;
   gobject_class->finalize = gst_webrtc_ice_stream_finalize;
 
-  g_object_class_install_property (gobject_class,
-      PROP_ICE,
-      g_param_spec_object ("ice",
-          "ICE", "ICE agent associated with this stream",
-          GST_TYPE_WEBRTC_ICE,
+  g_object_class_install_property (gobject_class, PROP_ICE,
+      g_param_spec_object ("ice", "ICE",
+          "ICE agent associated with this stream", GST_TYPE_WEBRTC_ICE,
           G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS));
 
-  g_object_class_install_property (gobject_class,
-      PROP_STREAM_ID,
-      g_param_spec_uint ("stream-id",
-          "ICE stream id", "ICE stream id associated with this stream",
-          0, G_MAXUINT, 0,
+  g_object_class_install_property (gobject_class, PROP_STREAM_ID,
+      g_param_spec_uint ("stream-id", "ICE stream id",
+          "ICE stream id associated with this stream", 0, G_MAXUINT, 0,
           G_PARAM_READWRITE | G_PARAM_CONSTRUCT_ONLY | G_PARAM_STATIC_STRINGS));
 }
 
@@ -230,6 +247,6 @@ gst_webrtc_ice_stream_init (GstWebRTCICEStream * ice)
 GstWebRTCICEStream *
 gst_webrtc_ice_stream_new (GstWebRTCICE * ice, guint stream_id)
 {
-  return g_object_new (GST_TYPE_WEBRTC_ICE_STREAM, "ice", ice,
-      "stream-id", stream_id, NULL);
+  return g_object_new (GST_TYPE_WEBRTC_ICE_STREAM, "ice", ice, "stream-id",
+      stream_id, NULL);
 }

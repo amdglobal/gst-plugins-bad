@@ -18,14 +18,14 @@
  */
 
 #ifdef HAVE_CONFIG_H
-# include "config.h"
+#include "config.h"
 #endif
 
 #include "gstwebrtcice.h"
 /* libnice */
-#include <agent.h>
 #include "icestream.h"
 #include "nicetransport.h"
+#include <agent.h>
 
 /* XXX:
  *
@@ -56,6 +56,10 @@ enum
   PROP_AGENT,
   PROP_ICE_TCP,
   PROP_ICE_UDP,
+  PROP_MIN_RTP_PORT,
+  PROP_MAX_RTP_PORT,
+  PROP_MIN_RTCP_PORT,
+  PROP_MAX_RTCP_PORT,
 };
 
 static guint gst_webrtc_ice_signals[LAST_SIGNAL] = { 0 };
@@ -78,10 +82,10 @@ struct _GstWebRTCICEPrivate
 };
 
 #define gst_webrtc_ice_parent_class parent_class
-G_DEFINE_TYPE_WITH_CODE (GstWebRTCICE, gst_webrtc_ice,
-    GST_TYPE_OBJECT, G_ADD_PRIVATE (GstWebRTCICE)
-    GST_DEBUG_CATEGORY_INIT (gst_webrtc_ice_debug, "webrtcice", 0,
-        "webrtcice"););
+G_DEFINE_TYPE_WITH_CODE (GstWebRTCICE, gst_webrtc_ice, GST_TYPE_OBJECT,
+    G_ADD_PRIVATE (GstWebRTCICE)
+    GST_DEBUG_CATEGORY_INIT (gst_webrtc_ice_debug, "webrtcice", 0, "webrtcice");
+    );
 
 static gboolean
 _unlock_pc_thread (GMutex * lock)
@@ -118,8 +122,8 @@ static void
 _start_thread (GstWebRTCICE * ice)
 {
   g_mutex_lock (&ice->priv->lock);
-  ice->priv->thread = g_thread_new (GST_OBJECT_NAME (ice),
-      (GThreadFunc) _gst_nice_thread, ice);
+  ice->priv->thread =
+      g_thread_new (GST_OBJECT_NAME (ice), (GThreadFunc) _gst_nice_thread, ice);
 
   while (!ice->priv->loop)
     g_cond_wait (&ice->priv->cond, &ice->priv->lock);
@@ -179,16 +183,15 @@ typedef gboolean (*NiceStreamItemForeachFunc) (struct NiceStreamItem * item,
     gpointer user_data);
 
 static void
-_nice_stream_item_foreach (GstWebRTCICE * ice, NiceStreamItemForeachFunc func,
-    gpointer data)
+_nice_stream_item_foreach (GstWebRTCICE * ice,
+    NiceStreamItemForeachFunc func, gpointer data)
 {
   int i, len;
 
   len = ice->priv->nice_stream_map->len;
   for (i = 0; i < len; i++) {
     struct NiceStreamItem *item =
-        &g_array_index (ice->priv->nice_stream_map, struct NiceStreamItem,
-        i);
+        &g_array_index (ice->priv->nice_stream_map, struct NiceStreamItem, i);
 
     if (!func (item, data))
       break;
@@ -232,7 +235,8 @@ _nice_stream_item_find (GstWebRTCICE * ice, NiceStreamItemFindFunc func,
   return f.ret;
 }
 
-#define NICE_MATCH_INIT { -1, -1, NULL }
+#define NICE_MATCH_INIT                                                        \
+  { -1, -1, NULL }
 
 static gboolean
 _match (struct NiceStreamItem *item, struct NiceStreamItem *m)
@@ -248,8 +252,8 @@ _match (struct NiceStreamItem *item, struct NiceStreamItem *m)
 }
 
 static struct NiceStreamItem *
-_find_item (GstWebRTCICE * ice, guint session_id, guint nice_stream_id,
-    GstWebRTCICEStream * stream)
+_find_item (GstWebRTCICE * ice, guint session_id,
+    guint nice_stream_id, GstWebRTCICEStream * stream)
 {
   struct NiceStreamItem m = NICE_MATCH_INIT;
 
@@ -269,6 +273,25 @@ _create_nice_stream_item (GstWebRTCICE * ice, guint session_id)
   item.nice_stream_id = nice_agent_add_stream (ice->priv->nice_agent, 2);
   item.stream = gst_webrtc_ice_stream_new (ice, item.nice_stream_id);
   g_array_append_val (ice->priv->nice_stream_map, item);
+
+  g_printerr ("nice_agent_add_stream(rtp, %d, %d)\n", ice->min_rtp_port,
+      ice->max_rtp_port);
+  g_printerr ("nice_agent_add_stream(rtcp, %d, %d)\n", ice->min_rtcp_port,
+      ice->max_rtcp_port);
+
+  if (ice->min_rtp_port && ice->max_rtp_port) {
+    g_printerr ("nice_agent_set_port_range(%d, %d)\n", ice->min_rtp_port,
+        ice->max_rtp_port);
+    nice_agent_set_port_range (ice->priv->nice_agent, item.nice_stream_id,
+        NICE_COMPONENT_TYPE_RTP, ice->min_rtp_port, ice->max_rtp_port);
+  }
+
+  if (ice->min_rtcp_port && ice->max_rtcp_port) {
+    g_printerr ("nice_agent_set_port_range(%d, %d)\n", ice->min_rtcp_port,
+        ice->max_rtcp_port);
+    nice_agent_set_port_range (ice->priv->nice_agent, item.nice_stream_id,
+        NICE_COMPONENT_TYPE_RTCP, ice->min_rtcp_port, ice->max_rtcp_port);
+  }
 
   return _find_item (ice, item.session_id, item.nice_stream_id, item.stream);
 }
@@ -336,7 +359,9 @@ _add_turn_server (GstWebRTCICE * ice, struct NiceStreamItem *item,
   gboolean ret;
   gchar *user, *pass;
   const gchar *host, *userinfo, *transport, *scheme;
-  NiceRelayType relays[4] = { 0, };
+  NiceRelayType relays[4] = {
+    0,
+  };
   int i, relay_n = 0;
   gchar *ip = NULL;
 
@@ -370,20 +395,20 @@ _add_turn_server (GstWebRTCICE * ice, struct NiceStreamItem *item,
   g_assert (relay_n < G_N_ELEMENTS (relays));
 
   for (i = 0; i < relay_n; i++) {
-    ret = nice_agent_set_relay_info (ice->priv->nice_agent,
-        item->nice_stream_id, NICE_COMPONENT_TYPE_RTP,
-        gst_uri_get_host (turn_server), gst_uri_get_port (turn_server),
-        user, pass, relays[i]);
+    ret =
+        nice_agent_set_relay_info (ice->priv->nice_agent, item->nice_stream_id,
+        NICE_COMPONENT_TYPE_RTP, gst_uri_get_host (turn_server),
+        gst_uri_get_port (turn_server), user, pass, relays[i]);
     if (!ret) {
       gchar *uri = gst_uri_to_string (turn_server);
       GST_ERROR_OBJECT (ice, "Failed to set TURN server '%s'", uri);
       g_free (uri);
       break;
     }
-    ret = nice_agent_set_relay_info (ice->priv->nice_agent,
-        item->nice_stream_id, NICE_COMPONENT_TYPE_RTCP,
-        gst_uri_get_host (turn_server), gst_uri_get_port (turn_server),
-        user, pass, relays[i]);
+    ret =
+        nice_agent_set_relay_info (ice->priv->nice_agent, item->nice_stream_id,
+        NICE_COMPONENT_TYPE_RTCP, gst_uri_get_host (turn_server),
+        gst_uri_get_port (turn_server), user, pass, relays[i]);
     if (!ret) {
       gchar *uri = gst_uri_to_string (turn_server);
       GST_ERROR_OBJECT (ice, "Failed to set TURN server '%s'", uri);
@@ -442,8 +467,8 @@ _add_stun_server (GstWebRTCICE * ice, GstUri * stun_server)
     goto out;
   }
 
-  g_object_set (ice->priv->nice_agent, "stun-server", ip,
-      "stun-server-port", port, NULL);
+  g_object_set (ice->priv->nice_agent, "stun-server", ip, "stun-server-port",
+      port, NULL);
 
 out:
   g_free (s);
@@ -502,7 +527,8 @@ _on_new_candidate (NiceAgent * agent, NiceCandidate * candidate,
     gboolean got_credentials;
     gchar *ufrag, *password;
 
-    got_credentials = nice_agent_get_local_credentials (ice->priv->nice_agent,
+    got_credentials =
+        nice_agent_get_local_credentials (ice->priv->nice_agent,
         candidate->stream_id, &ufrag, &password);
     g_warn_if_fail (got_credentials);
 
@@ -664,14 +690,15 @@ gst_webrtc_ice_add_candidate (GstWebRTCICE * ice, GstWebRTCICEStream * stream,
   item = _find_item (ice, -1, -1, stream);
   g_return_if_fail (item != NULL);
 
-  cand =
-      nice_agent_parse_remote_candidate_sdp (ice->priv->nice_agent,
+  cand = nice_agent_parse_remote_candidate_sdp (ice->priv->nice_agent,
       item->nice_stream_id, candidate);
   if (!cand) {
     /* might be a .local candidate */
     char *prefix = NULL, *address = NULL, *postfix = NULL;
     char *new_addr, *new_candidate;
-    char *new_candv[4] = { NULL, };
+    char *new_candv[4] = {
+      NULL,
+    };
 
     if (!get_candidate_address (candidate, &prefix, &address, &postfix)) {
       GST_WARNING_OBJECT (ice, "Failed to retrieve address from candidate %s",
@@ -680,8 +707,8 @@ gst_webrtc_ice_add_candidate (GstWebRTCICE * ice, GstWebRTCICEStream * stream,
     }
 
     if (!g_str_has_suffix (address, ".local")) {
-      GST_WARNING_OBJECT (ice, "candidate address \'%s\' does not end "
-          "with \'.local\'", address);
+      GST_WARNING_OBJECT (ice,
+          "candidate address \'%s\' does not end " "with \'.local\'", address);
       goto fail;
     }
 
@@ -742,7 +769,8 @@ gst_webrtc_ice_set_remote_credentials (GstWebRTCICE * ice,
   item = _find_item (ice, -1, -1, stream);
   g_return_val_if_fail (item != NULL, FALSE);
 
-  GST_DEBUG_OBJECT (ice, "Setting remote ICE credentials on "
+  GST_DEBUG_OBJECT (ice,
+      "Setting remote ICE credentials on "
       "ICE stream %u ufrag:%s pwd:%s", item->nice_stream_id, ufrag, pwd);
 
   nice_agent_set_remote_credentials (ice->priv->nice_agent,
@@ -801,7 +829,8 @@ gst_webrtc_ice_set_local_credentials (GstWebRTCICE * ice,
   item = _find_item (ice, -1, -1, stream);
   g_return_val_if_fail (item != NULL, FALSE);
 
-  GST_DEBUG_OBJECT (ice, "Setting local ICE credentials on "
+  GST_DEBUG_OBJECT (ice,
+      "Setting local ICE credentials on "
       "ICE stream %u ufrag:%s pwd:%s", item->nice_stream_id, ufrag, pwd);
 
   nice_agent_set_local_credentials (ice->priv->nice_agent, item->nice_stream_id,
@@ -836,8 +865,8 @@ gboolean
 gst_webrtc_ice_get_is_controller (GstWebRTCICE * ice)
 {
   gboolean ret;
-  g_object_get (G_OBJECT (ice->priv->nice_agent), "controlling-mode",
-      &ret, NULL);
+  g_object_get (G_OBJECT (ice->priv->nice_agent), "controlling-mode", &ret,
+      NULL);
   return ret;
 }
 
@@ -1005,12 +1034,24 @@ gst_webrtc_ice_set_property (GObject * object, guint prop_id,
 
   switch (prop_id) {
     case PROP_ICE_TCP:
-      g_object_set_property (G_OBJECT (ice->priv->nice_agent),
-          "ice-tcp", value);
+      g_object_set_property (G_OBJECT (ice->priv->nice_agent), "ice-tcp",
+          value);
       break;
     case PROP_ICE_UDP:
-      g_object_set_property (G_OBJECT (ice->priv->nice_agent),
-          "ice-udp", value);
+      g_object_set_property (G_OBJECT (ice->priv->nice_agent), "ice-udp",
+          value);
+      break;
+    case PROP_MIN_RTP_PORT:
+      ice->min_rtp_port = g_value_get_uint (value);
+      break;
+    case PROP_MAX_RTP_PORT:
+      ice->max_rtp_port = g_value_get_uint (value);
+      break;
+    case PROP_MIN_RTCP_PORT:
+      ice->min_rtcp_port = g_value_get_uint (value);
+      break;
+    case PROP_MAX_RTCP_PORT:
+      ice->max_rtcp_port = g_value_get_uint (value);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1029,12 +1070,24 @@ gst_webrtc_ice_get_property (GObject * object, guint prop_id,
       g_value_set_object (value, ice->priv->nice_agent);
       break;
     case PROP_ICE_TCP:
-      g_object_get_property (G_OBJECT (ice->priv->nice_agent),
-          "ice-tcp", value);
+      g_object_get_property (G_OBJECT (ice->priv->nice_agent), "ice-tcp",
+          value);
       break;
     case PROP_ICE_UDP:
-      g_object_get_property (G_OBJECT (ice->priv->nice_agent),
-          "ice-udp", value);
+      g_object_get_property (G_OBJECT (ice->priv->nice_agent), "ice-udp",
+          value);
+      break;
+    case PROP_MIN_RTP_PORT:
+      g_value_set_uint (value, ice->min_rtp_port);
+      break;
+    case PROP_MAX_RTP_PORT:
+      g_value_set_uint (value, ice->max_rtp_port);
+      break;
+    case PROP_MIN_RTCP_PORT:
+      g_value_set_uint (value, ice->min_rtcp_port);
+      break;
+    case PROP_MAX_RTCP_PORT:
+      g_value_set_uint (value, ice->max_rtcp_port);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1080,8 +1133,8 @@ gst_webrtc_ice_constructed (GObject * object)
 
   _start_thread (ice);
 
-  ice->priv->nice_agent = nice_agent_new (ice->priv->main_context,
-      NICE_COMPATIBILITY_RFC5245);
+  ice->priv->nice_agent =
+      nice_agent_new (ice->priv->main_context, NICE_COMPATIBILITY_RFC5245);
   g_signal_connect (ice->priv->nice_agent, "new-candidate-full",
       G_CALLBACK (_on_new_candidate), ice);
 
@@ -1098,26 +1151,42 @@ gst_webrtc_ice_class_init (GstWebRTCICEClass * klass)
   gobject_class->set_property = gst_webrtc_ice_set_property;
   gobject_class->finalize = gst_webrtc_ice_finalize;
 
-  g_object_class_install_property (gobject_class,
-      PROP_AGENT,
+  g_object_class_install_property (gobject_class, PROP_AGENT,
       g_param_spec_object ("agent", "ICE agent",
           "ICE agent in use by this object. WARNING! Accessing this property "
           "may have disastrous consequences for the operation of webrtcbin. "
           "Other ICE implementations may not have the same interface.",
           NICE_TYPE_AGENT, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
-  g_object_class_install_property (gobject_class,
-      PROP_ICE_TCP,
+  g_object_class_install_property (gobject_class, PROP_ICE_TCP,
       g_param_spec_boolean ("ice-tcp", "ICE TCP",
           "Whether the agent should use ICE-TCP when gathering candidates",
           TRUE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  g_object_class_install_property (gobject_class,
-      PROP_ICE_UDP,
+  g_object_class_install_property (gobject_class, PROP_ICE_UDP,
       g_param_spec_boolean ("ice-udp", "ICE UDP",
           "Whether the agent should use ICE-UDP when gathering candidates",
           TRUE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
+  g_object_class_install_property (gobject_class, PROP_MIN_RTP_PORT,
+      g_param_spec_uint ("min-rtp-port", "ICE Min RTP Port",
+          "The minimum port to use for RTP", 0, 65535, 0,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  g_object_class_install_property (gobject_class, PROP_MAX_RTP_PORT,
+      g_param_spec_uint ("max-rtp-port", "ICE Max RTP Port",
+          "The maximum port to use for RTP", 0, 65535, 0,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  g_object_class_install_property (gobject_class, PROP_MIN_RTCP_PORT,
+      g_param_spec_uint ("min-rtcp-port", "ICE Min RTCP Port",
+          "The minimum port to use for RTCP", 0, 65535, 0,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  g_object_class_install_property (gobject_class, PROP_MAX_RTCP_PORT,
+      g_param_spec_uint ("max-rtcp-port", "ICE Max RTCP Port",
+          "The maximum port to use for RTCP", 0, 65535, 0,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   /**
    * GstWebRTCICE::add-local-ip-address:
    * @object: the #GstWebRTCICE
@@ -1144,8 +1213,7 @@ gst_webrtc_ice_init (GstWebRTCICE * ice)
   g_mutex_init (&ice->priv->lock);
   g_cond_init (&ice->priv->cond);
 
-  ice->turn_servers =
-      g_hash_table_new_full (g_str_hash, g_str_equal, g_free,
+  ice->turn_servers = g_hash_table_new_full (g_str_hash, g_str_equal, g_free,
       (GDestroyNotify) gst_uri_unref);
 
   ice->priv->nice_stream_map =
