@@ -2287,7 +2287,7 @@ static gboolean
 sdp_media_from_transceiver (GstWebRTCBin * webrtc, GstSDPMedia * media,
     GstWebRTCRTPTransceiver * trans, GstWebRTCSDPType type, guint media_idx,
     GString * bundled_mids, guint bundle_idx, gchar * bundle_ufrag,
-    gchar * bundle_pwd, GArray * reserved_pts)
+    gchar * bundle_pwd, GArray * reserved_pts, gboolean restart)
 {
   /* TODO:
    * rtp header extensions
@@ -2319,7 +2319,7 @@ sdp_media_from_transceiver (GstWebRTCBin * webrtc, GstSDPMedia * media,
   gst_sdp_media_add_attribute (media, "setup", "actpass");
 
   /* FIXME: deal with ICE restarts */
-  if (last_offer && trans->mline != -1 && trans->mid) {
+  if (last_offer && trans->mline != -1 && trans->mid && !restart) {
     ufrag = g_strdup (_media_get_ice_ufrag (last_offer, trans->mline));
     pwd = g_strdup (_media_get_ice_pwd (last_offer, trans->mline));
     GST_DEBUG_OBJECT (trans, "%u Using previous ice parameters", media_idx);
@@ -2597,7 +2597,10 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
   GstSDPMessage *last_offer = _get_latest_self_generated_sdp (webrtc);
   GList *seen_transceivers = NULL;
   guint media_idx = 0;
+  gboolean restart;
   int i;
+
+  gst_structure_get_boolean (options, "restart", &restart);
 
   gst_sdp_message_new (&ret);
 
@@ -2738,7 +2741,7 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
 
     if (sdp_media_from_transceiver (webrtc, &media, trans,
             GST_WEBRTC_SDP_TYPE_OFFER, media_idx, bundled_mids, 0, bundle_ufrag,
-            bundle_pwd, reserved_pts)) {
+            bundle_pwd, reserved_pts, restart)) {
       gst_sdp_message_add_media (ret, &media);
       media_idx++;
     } else {
@@ -2927,7 +2930,10 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
   gchar *bundle_ufrag = NULL;
   gchar *bundle_pwd = NULL;
   GList *seen_transceivers = NULL;
+  gboolean restart;
   GstSDPMessage *last_answer = _get_latest_self_generated_sdp (webrtc);
+
+  gst_structure_get_boolean (options, "restart", &restart);
 
   if (!webrtc->pending_remote_description) {
     GST_ERROR_OBJECT (webrtc,
@@ -3009,7 +3015,8 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
       gchar *ufrag, *pwd;
 
       /* FIXME: deal with ICE restarts */
-      if (last_answer && i < gst_sdp_message_medias_len (last_answer)) {
+      if (last_answer && i < gst_sdp_message_medias_len (last_answer)
+          && !restart) {
         ufrag = g_strdup (_media_get_ice_ufrag (last_answer, i));
         pwd = g_strdup (_media_get_ice_pwd (last_answer, i));
       } else {
