@@ -2500,7 +2500,7 @@ static gboolean
 _add_data_channel_offer (GstWebRTCBin * webrtc,
     GstSDPMessage * msg, GstSDPMedia * media,
     GString * bundled_mids, guint bundle_idx,
-    gchar * bundle_ufrag, gchar * bundle_pwd)
+    gchar * bundle_ufrag, gchar * bundle_pwd, gboolean restart)
 {
   GstSDPMessage *last_offer = _get_latest_self_generated_sdp (webrtc);
   gchar *ufrag, *pwd, *sdp_mid;
@@ -2528,7 +2528,7 @@ _add_data_channel_offer (GstWebRTCBin * webrtc,
   gst_sdp_media_add_attribute (media, "setup", "actpass");
 
   /* FIXME: only needed when restarting ICE */
-  if (last_offer && last_data_index < G_MAXUINT) {
+  if (last_offer && last_data_index < G_MAXUINT && !restart) {
     ufrag = g_strdup (_media_get_ice_ufrag (last_offer, last_data_index));
     pwd = g_strdup (_media_get_ice_pwd (last_offer, last_data_index));
   } else {
@@ -2635,7 +2635,8 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
     reserved_pts = gather_reserved_pts (webrtc);
     if (last_offer && _parse_bundle (last_offer, &last_bundle) && last_bundle &&
         last_bundle && last_bundle[0] &&
-        _get_bundle_index (last_offer, last_bundle, &bundle_media_index)) {
+        _get_bundle_index (last_offer, last_bundle, &bundle_media_index) &&
+        !restart) {
       bundle_ufrag =
           g_strdup (_media_get_ice_ufrag (last_offer, bundle_media_index));
       bundle_pwd =
@@ -2650,7 +2651,7 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
   /* FIXME: recycle transceivers */
 
   /* Fill up the renegotiated streams first */
-  if (last_offer) {
+  if (last_offer && !restart) {
     for (i = 0; i < gst_sdp_message_medias_len (last_offer); i++) {
       GstWebRTCRTPTransceiver *trans = NULL;
       const GstSDPMedia *last_media;
@@ -2702,7 +2703,7 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
         };
         gst_sdp_media_init (&media);
         if (_add_data_channel_offer (webrtc, ret, &media, bundled_mids, 0,
-                bundle_ufrag, bundle_pwd)) {
+                bundle_ufrag, bundle_pwd, restart)) {
           gst_sdp_message_add_media (ret, &media);
           media_idx++;
         } else {
@@ -2722,7 +2723,7 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
     trans = g_ptr_array_index (webrtc->priv->transceivers, i);
 
     /* don't add transceivers twice */
-    if (g_list_find (seen_transceivers, trans))
+    if (g_list_find (seen_transceivers, trans) && !restart)
       continue;
 
     /* don't add stopped transceivers */
@@ -2765,7 +2766,7 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
     };
     gst_sdp_media_init (&media);
     if (_add_data_channel_offer (webrtc, ret, &media, bundled_mids, 0,
-            bundle_ufrag, bundle_pwd)) {
+            bundle_ufrag, bundle_pwd, restart)) {
       gst_sdp_message_add_media (ret, &media);
       media_idx++;
     } else {
@@ -3015,8 +3016,8 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
       gchar *ufrag, *pwd;
 
       /* FIXME: deal with ICE restarts */
-      if (last_answer && i < gst_sdp_message_medias_len (last_answer)
-          && !restart) {
+      if (last_answer && i < gst_sdp_message_medias_len (last_answer) &&
+          !restart) {
         ufrag = g_strdup (_media_get_ice_ufrag (last_answer, i));
         pwd = g_strdup (_media_get_ice_pwd (last_answer, i));
       } else {

@@ -823,18 +823,29 @@ gst_webrtc_ice_set_local_credentials (GstWebRTCICE * ice,
     GstWebRTCICEStream * stream, gchar * ufrag, gchar * pwd)
 {
   struct NiceStreamItem *item;
+  gchar *last_ufrag;
+  gchar *last_pwd;
 
   g_return_val_if_fail (ufrag != NULL, FALSE);
   g_return_val_if_fail (pwd != NULL, FALSE);
   item = _find_item (ice, -1, -1, stream);
   g_return_val_if_fail (item != NULL, FALSE);
 
+  nice_agent_get_local_credentials (ice->priv->nice_agent, item->nice_stream_id,
+      &last_ufrag, &last_pwd);
+
   GST_DEBUG_OBJECT (ice,
       "Setting local ICE credentials on "
       "ICE stream %u ufrag:%s pwd:%s", item->nice_stream_id, ufrag, pwd);
 
+  if (strcmp (last_ufrag, ufrag) != 0 || strcmp (last_pwd, pwd) != 0) {
+    gst_webrtc_ice_stream_restart (stream);
+  }
   nice_agent_set_local_credentials (ice->priv->nice_agent, item->nice_stream_id,
       ufrag, pwd);
+
+  g_free (last_ufrag);
+  g_free (last_pwd);
 
   return TRUE;
 }

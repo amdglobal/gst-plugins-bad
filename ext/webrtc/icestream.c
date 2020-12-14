@@ -168,6 +168,42 @@ gst_webrtc_ice_stream_constructed (GObject * object)
   G_OBJECT_CLASS (parent_class)->constructed (object);
 }
 
+static void
+add_ice_candidate_again (NiceCandidate * candidate, GstWebRTCICEStream * stream)
+{
+  GstWebRTCICE *ice = stream->ice;
+  NiceAgent *agent;
+
+  g_object_get (stream->ice, "agent", &agent, NULL);
+
+  /**
+    * HACK: Hijack NiceAgent's new-candidate-full signal to trick webrtcbin
+    * into signaling it again
+    **/
+  g_signal_emit_by_name (agent, "new-candidate-full", candidate, ice);
+}
+
+void
+gst_webrtc_ice_stream_restart (GstWebRTCICEStream * stream)
+{
+  NiceAgent *agent;
+  GSList *rtp_candidates = NULL;
+  GSList *rtcp_candidates = NULL;
+
+  g_object_get (stream->ice, "agent", &agent, NULL);
+  stream->priv->gathered = FALSE;
+  stream->priv->gathering_started = FALSE;
+  nice_agent_restart_stream (agent, stream->stream_id);
+
+  rtp_candidates = nice_agent_get_local_candidates (agent, stream->stream_id,
+      NICE_COMPONENT_TYPE_RTP);
+  rtcp_candidates = nice_agent_get_local_candidates (agent, stream->stream_id,
+      NICE_COMPONENT_TYPE_RTCP);
+
+  g_slist_foreach (rtp_candidates, (GFunc) add_ice_candidate_again, stream);
+  g_slist_foreach (rtcp_candidates, (GFunc) add_ice_candidate_again, stream);
+}
+
 gboolean
 gst_webrtc_ice_stream_gather_candidates (GstWebRTCICEStream * stream)
 {
@@ -207,6 +243,7 @@ gst_webrtc_ice_stream_gather_candidates (GstWebRTCICEStream * stream)
 
     stream->priv->gathering_started = TRUE;
   }
+
   g_printerr ("nice_agent_gather_candidates(%d)\n", stream->stream_id);
   if (!nice_agent_gather_candidates (agent, stream->stream_id)) {
     g_object_unref (agent);
