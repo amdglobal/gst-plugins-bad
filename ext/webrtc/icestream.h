@@ -64,7 +64,6 @@ GstWebRTCICETransport *
 gst_webrtc_ice_stream_find_transport(GstWebRTCICEStream *stream,
                                      GstWebRTCICEComponent component);
 gboolean gst_webrtc_ice_stream_gather_candidates(GstWebRTCICEStream *ice);
-void gst_webrtc_ice_stream_restart(GstWebRTCICEStream *stream);
 
 G_END_DECLS
 

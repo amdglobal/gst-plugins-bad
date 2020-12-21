@@ -84,8 +84,8 @@ struct _GstWebRTCICEPrivate
 #define gst_webrtc_ice_parent_class parent_class
 G_DEFINE_TYPE_WITH_CODE (GstWebRTCICE, gst_webrtc_ice, GST_TYPE_OBJECT,
     G_ADD_PRIVATE (GstWebRTCICE)
-    GST_DEBUG_CATEGORY_INIT (gst_webrtc_ice_debug, "webrtcice", 0, "webrtcice");
-    );
+    GST_DEBUG_CATEGORY_INIT (gst_webrtc_ice_debug, "webrtcice", 0,
+        "webrtcice"););
 
 static gboolean
 _unlock_pc_thread (GMutex * lock)
@@ -176,6 +176,10 @@ struct NiceStreamItem
   guint session_id;
   guint nice_stream_id;
   GstWebRTCICEStream *stream;
+  gchar *local_ufrag;
+  gchar *local_pwd;
+  gchar *remote_ufrag;
+  gchar *remote_pwd;
 };
 
 /* TRUE to continue, FALSE to stop */
@@ -272,6 +276,11 @@ _create_nice_stream_item (GstWebRTCICE * ice, guint session_id)
   item.session_id = session_id;
   item.nice_stream_id = nice_agent_add_stream (ice->priv->nice_agent, 2);
   item.stream = gst_webrtc_ice_stream_new (ice, item.nice_stream_id);
+  item.local_ufrag = NULL;
+  item.local_pwd = NULL;
+  item.remote_ufrag = NULL;
+  item.remote_pwd = NULL;
+
   g_array_append_val (ice->priv->nice_stream_map, item);
 
   g_printerr ("nice_agent_add_stream(rtp, %d, %d)\n", ice->min_rtp_port,
@@ -510,19 +519,36 @@ gst_webrtc_ice_add_stream (GstWebRTCICE * ice, guint session_id)
 }
 
 static void
-_on_new_candidate (NiceAgent * agent, NiceCandidate * candidate,
-    GstWebRTCICE * ice)
+_signal_local_candidate (NiceCandidate * candidate, GstWebRTCICE * ice)
 {
   struct NiceStreamItem *item;
   gchar *attr;
 
   item = _find_item (ice, -1, candidate->stream_id, NULL);
   if (!item) {
-    GST_WARNING_OBJECT (ice, "received signal for non-existent stream %u",
+    GST_WARNING_OBJECT (ice, "ordered to signal for non-existent stream %u",
         candidate->stream_id);
     return;
   }
 
+  attr =
+      nice_agent_generate_local_candidate_sdp (ice->priv->nice_agent,
+      candidate);
+
+  if (ice->priv->on_candidate) {
+    GST_DEBUG_OBJECT (ice, "signaling for stream %u", candidate->stream_id);
+    ice->priv->on_candidate (ice, item->session_id, attr,
+        ice->priv->on_candidate_data);
+  }
+
+  g_free (attr);
+}
+
+static void
+_on_new_candidate (NiceAgent * agent, NiceCandidate * candidate,
+    GstWebRTCICE * ice)
+{
+  GST_DEBUG_OBJECT (ice, "_on_new_candidate");
   if (!candidate->username || !candidate->password) {
     gboolean got_credentials;
     gchar *ufrag, *password;
@@ -543,14 +569,31 @@ _on_new_candidate (NiceAgent * agent, NiceCandidate * candidate,
       g_free (password);
   }
 
-  attr = nice_agent_generate_local_candidate_sdp (agent, candidate);
+  GST_DEBUG_OBJECT (ice, "Signaling local candidate");
 
-  if (ice->priv->on_candidate)
-    ice->priv->on_candidate (ice, item->session_id, attr,
-        ice->priv->on_candidate_data);
-
-  g_free (attr);
+  _signal_local_candidate (candidate, ice);
 }
+
+void
+gst_webrtc_ice_signal_local_candidates (GstWebRTCICE * ice,
+    GstWebRTCICEStream * stream)
+{
+  GSList *rtp_candidates =
+      nice_agent_get_local_candidates (ice->priv->nice_agent,
+      stream->stream_id, NICE_COMPONENT_TYPE_RTP);
+  GSList *rtcp_candidates =
+      nice_agent_get_local_candidates (ice->priv->nice_agent,
+      stream->stream_id, NICE_COMPONENT_TYPE_RTCP);
+
+  g_slist_foreach (rtp_candidates, (GFunc) _signal_local_candidate,
+      (gpointer) ice);
+  g_slist_foreach (rtcp_candidates, (GFunc) _signal_local_candidate,
+      (gpointer) ice);
+
+  g_slist_free (rtp_candidates);
+  g_slist_free (rtcp_candidates);
+}
+
 
 GstWebRTCICETransport *
 gst_webrtc_ice_find_transport (GstWebRTCICE * ice, GstWebRTCICEStream * stream,
@@ -773,8 +816,26 @@ gst_webrtc_ice_set_remote_credentials (GstWebRTCICE * ice,
       "Setting remote ICE credentials on "
       "ICE stream %u ufrag:%s pwd:%s", item->nice_stream_id, ufrag, pwd);
 
+  if (item->remote_ufrag || item->remote_pwd) {
+    if (g_strcmp0 (item->remote_ufrag, ufrag) != 0
+        || g_strcmp0 (item->remote_pwd, pwd) != 0) {
+      /* nice_agent_restart_stream (ice->priv->nice_agent, item->nice_stream_id); */
+    }
+  }
+
   nice_agent_set_remote_credentials (ice->priv->nice_agent,
       item->nice_stream_id, ufrag, pwd);
+
+  if (item->remote_ufrag) {
+    g_free (item->remote_ufrag);
+  }
+
+  if (item->remote_pwd) {
+    g_free (item->remote_pwd);
+  }
+
+  item->remote_ufrag = g_strdup (ufrag);
+  item->remote_pwd = g_strdup (pwd);
 
   return TRUE;
 }
@@ -823,29 +884,44 @@ gst_webrtc_ice_set_local_credentials (GstWebRTCICE * ice,
     GstWebRTCICEStream * stream, gchar * ufrag, gchar * pwd)
 {
   struct NiceStreamItem *item;
-  gchar *last_ufrag;
-  gchar *last_pwd;
+  gboolean is_restarting = FALSE;
 
   g_return_val_if_fail (ufrag != NULL, FALSE);
   g_return_val_if_fail (pwd != NULL, FALSE);
   item = _find_item (ice, -1, -1, stream);
   g_return_val_if_fail (item != NULL, FALSE);
 
-  nice_agent_get_local_credentials (ice->priv->nice_agent, item->nice_stream_id,
-      &last_ufrag, &last_pwd);
+  if (item->local_ufrag || item->local_pwd) {
+    if (g_strcmp0 (item->local_ufrag, ufrag) != 0
+        || g_strcmp0 (item->local_pwd, pwd) != 0) {
+      GST_DEBUG_OBJECT (ice,
+          "Restarting ICE stream with " "ICE stream %u ufrag:%s pwd:%s",
+          item->nice_stream_id, ufrag, pwd);
+      nice_agent_restart_stream (ice->priv->nice_agent, stream->stream_id);
+      is_restarting = TRUE;
+    }
+  }
 
   GST_DEBUG_OBJECT (ice,
       "Setting local ICE credentials on "
       "ICE stream %u ufrag:%s pwd:%s", item->nice_stream_id, ufrag, pwd);
 
-  if (strcmp (last_ufrag, ufrag) != 0 || strcmp (last_pwd, pwd) != 0) {
-    gst_webrtc_ice_stream_restart (stream);
-  }
   nice_agent_set_local_credentials (ice->priv->nice_agent, item->nice_stream_id,
       ufrag, pwd);
 
-  g_free (last_ufrag);
-  g_free (last_pwd);
+  if (item->local_ufrag) {
+    g_free (item->local_ufrag);
+  }
+
+  if (item->local_pwd) {
+    g_free (item->local_pwd);
+  }
+
+  item->local_ufrag = g_strdup (ufrag);
+  item->local_pwd = g_strdup (pwd);
+
+  if (is_restarting)
+    gst_webrtc_ice_signal_local_candidates (ice, stream);
 
   return TRUE;
 }
@@ -911,6 +987,22 @@ _clear_ice_stream (struct NiceStreamItem *item)
     g_signal_handlers_disconnect_by_data (item->stream->ice->priv->nice_agent,
         item->stream);
     gst_object_unref (item->stream);
+  }
+
+  if (item->local_ufrag) {
+    g_free (item->local_ufrag);
+  }
+
+  if (item->local_pwd) {
+    g_free (item->local_pwd);
+  }
+
+  if (item->remote_ufrag) {
+    g_free (item->remote_ufrag);
+  }
+
+  if (item->remote_pwd) {
+    g_free (item->remote_pwd);
   }
 }
 
